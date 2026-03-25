@@ -1,0 +1,33 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "akar-fourwheel-sheets-backend",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "webpack --config=Scripts/config/webpack.prod.js",
+    "postinstall": "puppeteer install"
+  },
+  "author": "jaidev",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "expresss": "^0.0.0",
+    "google-auth-library": "^9.15.1",
+    "google-spreadsheet": "^4.1.4",
+    "googleapis": "^148.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.13.2",
+    "nodemon": "^3.1.9",
+    "pdf-creator-node": "^2.3.5",
+    "puppeteer": "^24.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/puppeteer": "^1.0.1"
+  }
+}
