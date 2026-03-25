@@ -1,8 +1,16 @@
-import { Router } from 'express';
-const router = Router();
+import express from 'express';
+import { authenticateJWT, checkRole } from '../../middleware/auth.js'
+import { apiLimiter } from '../../middleware/rateLimiter.js';
+import allQuotationController from '../../Controller/adminControllers/allQuotationController.js';
+import userInfoController from '../../Controller/adminControllers/userInfoController.js';
+import bookingPageController from '../../Controller/adminControllers/bookingPageController.js';
+import paginationMiddleware from '../../middleware/pagination.js';
 
-router.get('/health', (req, res) => {
-  res.json({ message: 'Admin routes working' });
-});
-
-export default router;
+const adminRoute = express.Router();
+adminRoute.use(apiLimiter);
+adminRoute.use(authenticateJWT);
+adminRoute.use(checkRole(['admin']));
+adminRoute.get('/all-quotations', paginationMiddleware, allQuotationController);
+adminRoute.get('/user-info', userInfoController);
+adminRoute.get('/all-bookings', bookingPageController);
+export default adminRoute;
