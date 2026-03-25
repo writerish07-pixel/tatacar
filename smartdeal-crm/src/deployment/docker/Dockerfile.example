@@ -1,0 +1,71 @@
+# SmartDeal CRM — Dockerfile Example
+# Multi-stage build for any NestJS microservice
+# Usage: docker build -f Dockerfile.example -t smartdeal/<service-name>:latest .
+#
+# This template is used for all services:
+#   auth-service, lead-service, quotation-service, booking-service,
+#   finance-service, insurance-service, billing-service, stock-service,
+#   pdi-service, delivery-service, notification-service, analytics-service
+
+# ─── Stage 1: Build ───────────────────────────────────────────────────────────
+FROM node:18-alpine AS builder
+
+# Install build tools for native modules (e.g., bcrypt, sharp)
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+
+# Copy package files first (better layer caching)
+COPY package.json package-lock.json ./
+
+# Install all dependencies (including devDependencies for build)
+RUN npm ci --ignore-scripts
+
+# Copy source code
+COPY . .
+
+# Build the NestJS application
+RUN npm run build
+
+# Remove devDependencies for production image
+RUN npm ci --only=production --ignore-scripts
+
+# ─── Stage 2: Production ──────────────────────────────────────────────────────
+FROM node:18-alpine AS production
+
+# Security: create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nestjs -u 1001 -G nodejs
+
+WORKDIR /app
+
+# Copy only production artifacts from builder
+COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
+COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nestjs:nodejs /app/package.json ./
+
+# Set production environment
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# Expose service port
+EXPOSE 3000
+
+# Switch to non-root user
+USER nestjs
+
+# Health check (all services expose GET /health)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => { \
+    process.exit(r.statusCode === 200 ? 0 : 1); \
+  }).on('error', () => process.exit(1))"
+
+# Start the application
+CMD ["node", "dist/main.js"]
+
+# ─── Build Arguments (optional) ───────────────────────────────────────────────
+# docker build \
+#   --build-arg SERVICE_NAME=lead-service \
+#   --build-arg SERVICE_PORT=3002 \
+#   -t smartdeal/lead-service:1.0.0 \
+#   src/services/lead-service/
