@@ -45,7 +45,7 @@ See `src/deployment/docker/docker-compose.yml.example` for the full development 
 - `elasticsearch` (port 9200)
 - `kibana` (port 5601)
 - `prometheus` (port 9090)
-- `grafana` (port 3001)
+- `grafana` (port 3100)
 
 ```bash
 # Start all services
