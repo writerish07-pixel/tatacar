@@ -16,6 +16,7 @@
 'use strict';
 
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { Pool } = require('pg');
@@ -24,6 +25,26 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 
 const router = express.Router();
+
+// ─── Rate Limiters ────────────────────────────────────────────────────────────
+
+/** Standard API rate limit: 60 requests/minute per IP */
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests, please try again later.' } },
+});
+
+/** Stricter limit for write operations: 20 requests/minute per IP */
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many write requests, please slow down.' } },
+});
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -127,7 +148,7 @@ function requireAuth(req, res, next) {
  * @desc    Create a new PDI checklist for a vehicle (loads template items)
  * @access  PDI Technician, Sales Manager, Admin
  */
-router.post('/checklists', requireAuth, async (req, res) => {
+router.post('/checklists', requireAuth, writeLimiter, async (req, res) => {
   const { vehicleId, bookingId, technicianId } = req.body;
 
   if (!vehicleId) {
@@ -269,7 +290,7 @@ router.post('/checklists', requireAuth, async (req, res) => {
  * @desc    Get full PDI checklist with all items and photos
  * @access  PDI Technician (own), Manager, Admin
  */
-router.get('/checklists/:id', requireAuth, async (req, res) => {
+router.get('/checklists/:id', requireAuth, apiLimiter, async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -342,7 +363,7 @@ router.get('/checklists/:id', requireAuth, async (req, res) => {
  * @desc    Update a PDI item result (Pass/Fail/Rework/NA) and notes
  * @access  PDI Technician, Manager, Admin
  */
-router.patch('/items/:itemId', requireAuth, async (req, res) => {
+router.patch('/items/:itemId', requireAuth, writeLimiter, async (req, res) => {
   const { itemId } = req.params;
   const { result, technicianNotes } = req.body;
 
@@ -440,7 +461,7 @@ router.patch('/items/:itemId', requireAuth, async (req, res) => {
  * @desc    Upload photo evidence for a PDI checklist item
  * @access  PDI Technician, Manager, Admin
  */
-router.post('/items/:itemId/photos', requireAuth, upload.array('photos', 5), async (req, res) => {
+router.post('/items/:itemId/photos', requireAuth, writeLimiter, upload.array('photos', 5), async (req, res) => {
   const { itemId } = req.params;
   const { caption } = req.body;
   const files = req.files;
@@ -508,7 +529,7 @@ router.post('/items/:itemId/photos', requireAuth, upload.array('photos', 5), asy
  *          publishes Redis event to unlock delivery scheduling.
  * @access  PDI Technician, Manager, Admin
  */
-router.post('/checklists/:id/complete', requireAuth, async (req, res) => {
+router.post('/checklists/:id/complete', requireAuth, writeLimiter, async (req, res) => {
   const { id } = req.params;
   const client = await db.connect();
 

@@ -14,6 +14,7 @@
 'use strict';
 
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const Joi = require('joi');
 const { Pool } = require('pg');
 const Redis = require('ioredis');
@@ -21,6 +22,26 @@ const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
+
+// ─── Rate Limiters ────────────────────────────────────────────────────────────
+
+/** Lead creation: 10 per 5 minutes per IP (prevents QR-scan abuse) */
+const leadCreateLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many lead submissions. Please wait before trying again.' } },
+});
+
+/** Read endpoints: 60 per minute per IP */
+const readLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests. Please slow down.' } },
+});
 
 // ─── Database & Cache Connections ────────────────────────────────────────────
 
@@ -215,7 +236,7 @@ async function writeAuditLog(dbPool, { userId, branchId, action, resourceType, r
  * @desc    Create a new lead (from QR scan, walk-in, phone, web inquiry)
  * @access  Public (QR scan) or Authenticated (manual entry by consultant)
  */
-router.post('/', async (req, res) => {
+router.post('/', leadCreateLimiter, async (req, res) => {
   const correlationId = req.headers['x-correlation-id'] || uuidv4();
   const ipAddress = req.ip || req.connection.remoteAddress;
   const userAgent = req.headers['user-agent'];
@@ -422,7 +443,7 @@ router.post('/', async (req, res) => {
  * @desc    Get all follow-ups due today for the authenticated consultant
  * @access  Authenticated (sales consultant, sales manager)
  */
-router.get('/follow-ups/today', async (req, res) => {
+router.get('/follow-ups/today', readLimiter, async (req, res) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: { code: 'AUTH_REQUIRED' } });
   }
