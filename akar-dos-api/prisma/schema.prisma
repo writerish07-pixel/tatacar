@@ -1,0 +1,295 @@
+// AKAR DOS — Prisma schema.
+// Milestone 1 (Foundation) scope: identity, RBAC, permissions, audit, domain
+// events, tasks (My Work), notifications, config. Domain tables (leads,
+// inventory, quotations, bookings, NOC, etc.) are added in later milestones
+// via incremental migrations — per the milestone-gated plan (docs/02 §2).
+//
+// Conventions (docs/07 §4): DB columns snake_case via @map, Prisma fields
+// camelCase, enums UPPER_SNAKE. Prisma 7 runs Rust-free with the pg driver
+// adapter (see src/prisma/prisma.service.ts).
+
+generator client {
+  provider     = "prisma-client-js"
+  engineType   = "client"
+  output       = "../node_modules/.prisma/client"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Prisma 7: the connection URL lives in prisma.config.ts (datasource.url for
+  // the schema engine) and is passed to PrismaClient via the pg driver adapter.
+}
+
+// ─────────────────────────── Enums (foundation subset) ───────────────────────────
+
+enum UserRole {
+  OWNER
+  GM
+  EV_MANAGER
+  PV_MANAGER
+  TL
+  SALES
+  RECEPTION
+  FINANCE_MANAGER
+  CASHIER_MANAGER
+  ACCOUNTS_MANAGER
+  ACCESSORIES_MANAGER
+  PDI_MANAGER
+  TD_COORDINATOR
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum VehicleType {
+  EV
+  PV
+  ICE
+  ALL
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum NotificationType {
+  TASK
+  APPROVAL
+  INFO
+  ALERT
+  ESCALATION
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+  ACTIONED
+  EXPIRED
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+// ─────────────────────────── Organization & identity ───────────────────────────
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  gstin     String?
+  address   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branches Branch[]
+
+  @@map("organizations")
+}
+
+model Branch {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  code           String   @unique
+  address        String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  departments  Department[]
+  users        User[]
+
+  @@map("branches")
+}
+
+model Department {
+  id        String   @id @default(uuid())
+  branchId  String   @map("branch_id")
+  name      String
+  code      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@unique([branchId, code])
+  @@map("departments")
+}
+
+model User {
+  id             String      @id @default(uuid())
+  salesTeamId    String      @unique @map("sales_team_id") // login id e.g. GM_01
+  passwordHash   String      @map("password_hash")
+  name           String
+  email          String?     @unique
+  role           UserRole
+  branchId       String?     @map("branch_id")
+  vehicleType    VehicleType @default(ALL) @map("vehicle_type")
+  teamId         String?     @map("team_id")
+  teamLeaderId   String?     @map("team_leader_id")
+  managerId      String?     @map("manager_id")
+  hierarchyLevel Int         @default(5) @map("hierarchy_level")
+  discountCap    Decimal?    @map("discount_cap") @db.Decimal(12, 2)
+  status         UserStatus  @default(ACTIVE)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  branch        Branch?        @relation(fields: [branchId], references: [id])
+  teamLeader    User?          @relation("TeamLeader", fields: [teamLeaderId], references: [id])
+  teamMembers   User[]         @relation("TeamLeader")
+  manager       User?          @relation("Manager", fields: [managerId], references: [id])
+  reports       User[]         @relation("Manager")
+  sessions      UserSession[]
+  tasks         Task[]
+  notifications Notification[]
+
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model UserSession {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  refreshTokenHash String   @map("refresh_token_hash")
+  userAgent        String?  @map("user_agent")
+  ipAddress        String?  @map("ip_address")
+  expiresAt        DateTime @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+  @@map("user_sessions")
+}
+
+// ─────────────────────────── RBAC: permission matrix ───────────────────────────
+// Resource/action permissions per role with a visibility scope. The static
+// action authorization (ACTION_ROLES, docs/04 §3) lives in code
+// (common/action-policy.ts); this table holds resource-level RBAC the
+// Permission Engine resolves on top of it.
+
+model Permission {
+  id        String   @id @default(uuid())
+  role      UserRole
+  resource  String
+  action    String // CREATE | READ | UPDATE | DELETE | APPROVE
+  scope     String   @default("NONE") // ALL | BRANCH | TEAM | OWN | NONE
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([role, resource, action])
+  @@index([role])
+  @@map("permissions")
+}
+
+// ─────────────────────────── Audit & domain events ───────────────────────────
+// Both are append-only (docs/07 §4). No update/delete service methods exist.
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  event      String
+  actorId    String?  @map("actor_id")
+  oldValue   Json?    @map("old_value")
+  newValue   Json?    @map("new_value")
+  reason     String?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model DomainEvent {
+  id          String   @id @default(uuid())
+  eventType   String   @map("event_type")
+  aggregate   String
+  aggregateId String?  @map("aggregate_id")
+  payload     Json
+  actorId     String?  @map("actor_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([eventType])
+  @@index([aggregate, aggregateId])
+  @@index([createdAt])
+  @@map("domain_events")
+}
+
+// ─────────────────────────── Tasks (My Work) ───────────────────────────
+
+model Task {
+  id           String       @id @default(uuid())
+  title        String
+  description  String?
+  type         String
+  status       TaskStatus   @default(OPEN)
+  priority     TaskPriority @default(NORMAL)
+  assignedToId String       @map("assigned_to_id")
+  entityType   String?      @map("entity_type")
+  entityId     String?      @map("entity_id")
+  actionType   String?      @map("action_type")
+  dueAt        DateTime?    @map("due_at")
+  completedAt  DateTime?    @map("completed_at")
+  createdById  String?      @map("created_by_id")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  assignedTo User @relation(fields: [assignedToId], references: [id])
+
+  @@index([assignedToId, status])
+  @@index([dueAt])
+  @@map("tasks")
+}
+
+// ─────────────────────────── Notifications ───────────────────────────
+
+model Notification {
+  id           String               @id @default(uuid())
+  targetUserId String               @map("target_user_id")
+  type         NotificationType
+  title        String
+  message      String
+  entityType   String?              @map("entity_type")
+  entityId     String?              @map("entity_id")
+  priority     NotificationPriority @default(NORMAL)
+  status       NotificationStatus   @default(UNREAD)
+  actionsJson  Json?                @map("actions_json")
+  readAt       DateTime?            @map("read_at")
+  createdAt    DateTime             @default(now()) @map("created_at")
+
+  targetUser User @relation(fields: [targetUserId], references: [id])
+
+  @@index([targetUserId, status])
+  @@map("notifications")
+}
+
+// ─────────────────────────── Config settings ───────────────────────────
+
+model ConfigSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("config_settings")
+}
