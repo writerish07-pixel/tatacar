@@ -1,0 +1,27 @@
+# AKAR DOS — local infrastructure (PostgreSQL 16 + Redis 7).
+# PostgreSQL is exposed on 5433 to avoid clashing with a local 5432 (Master
+# Spec §6). The API .env DATABASE_URL points at 5433 for this standard workflow.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: akar
+      POSTGRES_PASSWORD: akar_dev_password
+      POSTGRES_DB: akar_dos
+    ports:
+      - "5433:5432"
+    volumes:
+      - akar_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U akar -d akar_dos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  akar_pgdata:
